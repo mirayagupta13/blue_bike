@@ -1,0 +1,153 @@
+---
+title: "blue_bike_eda"
+output: html_document
+date: "2024-10-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r including_packages}
+#including packages
+library(dplyr)
+library(purrr)
+library(readr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(plotly)
+```
+
+```{r load_files}
+setwd('/Users/mirayagupta/Desktop/DS104/blue_bike_data')
+csv_file_list = dir()
+csv_file_list
+df_list = map(csv_file_list, read_csv)
+data = bind_rows(df_list)
+dim(data)
+colnames(data)
+summary(data)
+```
+
+```{r clean_columns}
+#coalescing repeated columns
+
+data = data %>%
+  mutate(starttime = coalesce(starttime, started_at)) %>%
+  mutate(stoptime = coalesce(stoptime, ended_at)) %>%
+  mutate(start_station_id = coalesce(`start station id`, as.numeric(start_station_id))) %>%
+  mutate(start_station_name = coalesce(`start station name`, start_station_name)) %>%
+  mutate(start_lat = coalesce(`start station latitude`, start_lat)) %>%
+  mutate(start_lng = coalesce(`start station longitude`, start_lng)) %>%
+  mutate(end_station_id = coalesce(`end station id`, as.numeric(end_station_id))) %>%
+  mutate(end_station_name = coalesce(`end station name`, end_station_name)) %>%
+  mutate(end_lat = coalesce(`end station latitude`, end_lat)) %>%
+  mutate(end_lng = coalesce(`end station longitude`, end_lng))
+```
+```{r}
+print('start station id')
+sum(is.na(data$`start station id`))
+sum(is.na(data$start_station_id))
+na_start_indices1 = which(is.na(data$`start station id`))
+na_start_indices2 = which(is.na(data$start_station_id))
+unique(na_start_indices1 == na_start_indices2)
+# seems like there are certain indices for which there is no station start id available
+print('start station name')
+sum(is.na(data$`start station name`))
+sum(is.na(data$start_station_name))
+# for most of these indices, the station name is available. Not available for 1060 rides. This can be imputed using latitude/longitude
+
+print('end station id')
+sum(is.na(data$`end station id`))
+sum(is.na(data$end_station_id))
+na_end_indices1 = which(is.na(data$`end station id`))
+na_end_indices2 = which(is.na(data$end_station_id))
+unique(na_end_indices1 == na_end_indices2)
+# seems like there are certain indices for which there is no end station id available
+print('end station name')
+sum(is.na(data$`end station name`))
+sum(is.na(data$end_station_name))
+# for most of these indices, the station name is available. Not available for 21564 rides. This can be imputed using latitude/longitude
+
+#data = data %>% select(!c(started_at, ended_at, `start station id`, `start station name`, `start station latitude`, 
+      #             `start station longitude`, `end station id`, `end station name`, `end station latitude`, `end station longitude`))
+
+colnames(data)
+
+for (column in colnames(data)) {
+  print(column)
+  print(sum(is.na(data[[column]])))
+}
+```
+
+```{r plotting_data}
+sample = sample_n(data, 1000)
+par(mfrow = c(3, 3))
+hist(sample$starttime)
+hist(sample$stoptime)
+bar(table(sample$usertype))
+bar(table(sample$rideable_type))
+hist(sample$start_lng)
+hist(sample$end_lng)
+hist(sample$start_lat)
+hist(sample$end_lat)
+bar(table(sample$member_casual))
+```
+
+```{r}
+setwd('/Users/mirayagupta/Desktop/DS104')
+station_data = read_csv('current_bluebikes_stations.csv')
+dim(station_data)
+colnames(station_data)
+```
+
+
+```{r}
+new_headers = station_data[1,]
+colnames(station_data) = new_headers
+colnames(station_data)
+station_data = station_data[-1, ]
+head(station_data)
+head(data)
+```
+```{r merging_datasets}
+
+# merge for the start station
+data = data %>%
+  left_join(station_data, by = c("start_station_name" = "NAME")) 
+
+print(colnames(data))
+
+data = data %>%
+  rename(start_station_number = `Number`,
+         start_station_municipality = `Municipality`,
+         start_seasonal_status = `Seasonal Status`, 
+         start_station_docks = `Total Docks`, 
+         start_station_id_ = `Station ID (to match to historic system data)`)
+
+# merge for the end station
+data = data %>%
+  left_join(station_data, by = c("end_station_name" = "NAME"))
+
+print(colnames(data))
+
+data = data %>%
+  rename(end_station_number = `Number`,
+         end_station_municipality = `Municipality`,
+         end_seasonal_status = `Seasonal Status`, 
+         end_station_docks = `Total Docks`, 
+         end_station_id_ = `Station ID (to match to historic system data)`)
+
+# start_station_id_ represents the station ID from the station data as opposed to the ride data
+# end_station_id_ represents the station ID from the station data as opposed to the ride data
+
+head(data)
+#Error: vector memory limit of 16.0 Gb reached, see mem.maxVSize() - NOT ABLE TO MERGE DUE TO THIS ERROR
+# tried 1) increasing memory size - not working
+#       2) reducing number of columns - not possible yet, require other columns
+           
+```
+## Further cleaning 
+1. Map station names onto station ids. Where names are not available use latitude and longitude.
+2. Understand the postal code variable 
