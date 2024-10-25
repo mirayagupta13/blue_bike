@@ -1,6 +1,8 @@
 ---
 title: "blue_bike_eda"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 date: "2024-10-18"
 ---
 
@@ -8,7 +10,7 @@ date: "2024-10-18"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r including_packages}
+```{r including_packages, include=FALSE}
 #including packages
 library(dplyr)
 library(purrr)
@@ -19,31 +21,19 @@ library(ggplot2)
 library(plotly)
 ```
 
-```{r load_files}
-setwd('/Users/mirayagupta/Desktop/DS104/blue_bike_data')
+```{r load_files, include=FALSE}
+setwd('/Users/mirayagupta/Desktop/DS104/bb2023')
 csv_file_list = dir()
 csv_file_list
 df_list = map(csv_file_list, read_csv)
 data = bind_rows(df_list)
+```
+
+
+```{r}
 dim(data)
 colnames(data)
 summary(data)
-```
-
-```{r clean_columns}
-#coalescing repeated columns
-
-data = data %>%
-  mutate(starttime = coalesce(starttime, started_at)) %>%
-  mutate(stoptime = coalesce(stoptime, ended_at)) %>%
-  mutate(start_station_id = coalesce(`start station id`, as.numeric(start_station_id))) %>%
-  mutate(start_station_name = coalesce(`start station name`, start_station_name)) %>%
-  mutate(start_lat = coalesce(`start station latitude`, start_lat)) %>%
-  mutate(start_lng = coalesce(`start station longitude`, start_lng)) %>%
-  mutate(end_station_id = coalesce(`end station id`, as.numeric(end_station_id))) %>%
-  mutate(end_station_name = coalesce(`end station name`, end_station_name)) %>%
-  mutate(end_lat = coalesce(`end station latitude`, end_lat)) %>%
-  mutate(end_lng = coalesce(`end station longitude`, end_lng))
 ```
 ```{r}
 print('start station id')
@@ -81,36 +71,73 @@ for (column in colnames(data)) {
 }
 ```
 
+```{r clean_columns}
+#coalescing repeated columns
+
+data = data %>%
+  mutate(starttime = coalesce(starttime, started_at)) %>%
+  mutate(stoptime = coalesce(stoptime, ended_at)) %>%
+  mutate(start_station_id = coalesce(`start station id`, as.numeric(start_station_id))) %>%
+  mutate(start_station_name = coalesce(`start station name`, start_station_name)) %>%
+  mutate(start_lat = coalesce(`start station latitude`, start_lat)) %>%
+  mutate(start_lng = coalesce(`start station longitude`, start_lng)) %>%
+  mutate(end_station_id = coalesce(`end station id`, as.numeric(end_station_id))) %>%
+  mutate(end_station_name = coalesce(`end station name`, end_station_name)) %>%
+  mutate(end_lat = coalesce(`end station latitude`, end_lat)) %>%
+  mutate(end_lng = coalesce(`end station longitude`, end_lng)) %>%
+  mutate(usertype = coalesce(member_casual, usertype))
+```
+```{r}
+sum(is.na(data$starttime))
+sum(is.na(data$bikeid))
+```
+Since there are this many NA values in the bikeid variable (due to a change in how data was collected in the middle of 2023) it is not possible to calculate utilisation at an individual bike level for 2023. 
+
+An alternative I will use is to try and look at the number of bikes in use per station. 
+
+```{r dropping_columns}
+data = data %>% select(-bikeid, -started_at, -ended_at,
+                       -`start station id`, -`start station name`, 
+                       -`end station id`, -`end station name`,
+                       -`start station latitude`, -`start station longitude`,
+                       -`end station latitude`, -`end station longitude`,
+                       -`postal code`, -member_casual)
+colnames(data)
+```
+
 ```{r plotting_data}
 sample = sample_n(data, 1000)
 par(mfrow = c(3, 3))
-hist(sample$starttime)
-hist(sample$stoptime)
-bar(table(sample$usertype))
-bar(table(sample$rideable_type))
+# Assuming sample$starttime is your POSIXt data
+hist(sample$starttime, breaks = "hours", main = "Histogram of Start Times", xlab = "Start Time", col = "lightblue")
+# Assuming sample$stoptime is a POSIXt object
+hist(sample$stoptime, breaks = "hours", main = "Histogram of Stop Times", xlab = "Stop Time", col = "lightgreen")
+barplot(table(sample$usertype))
+barplot(table(sample$rideable_type))
 hist(sample$start_lng)
 hist(sample$end_lng)
 hist(sample$start_lat)
 hist(sample$end_lat)
-bar(table(sample$member_casual))
 ```
 
-```{r}
+```{r laoding_stationdata, include=FALSE}
 setwd('/Users/mirayagupta/Desktop/DS104')
 station_data = read_csv('current_bluebikes_stations.csv')
-dim(station_data)
-colnames(station_data)
 ```
 
 
-```{r}
+```{r cleaning_stationdata}
 new_headers = station_data[1,]
 colnames(station_data) = new_headers
-colnames(station_data)
 station_data = station_data[-1, ]
-head(station_data)
-head(data)
+colnames(station_data)
+station_data = station_data %>%
+                  mutate(`Total Docks` = as.numeric(`Total Docks`)) #this is coded as a character
+dim(station_data)
+summary(station_data)
 ```
+
+
 ```{r merging_datasets}
 
 # merge for the start station
@@ -141,13 +168,86 @@ data = data %>%
 
 # start_station_id_ represents the station ID from the station data as opposed to the ride data
 # end_station_id_ represents the station ID from the station data as opposed to the ride data
-
-head(data)
-#Error: vector memory limit of 16.0 Gb reached, see mem.maxVSize() - NOT ABLE TO MERGE DUE TO THIS ERROR
-# tried 1) increasing memory size - not working
-#       2) reducing number of columns - not possible yet, require other columns
-           
 ```
-## Further cleaning 
-1. Map station names onto station ids. Where names are not available use latitude and longitude.
-2. Understand the postal code variable 
+```{r}
+#Adding information for month and day of week
+data$month = month(data$starttime)
+data$day_of_week = wday(data$starttime)
+```
+
+```{r visualising_docks}
+docks_data = station_data %>%
+  select(`NAME`, `Total Docks`)
+docks_data = docks_data %>%
+                arrange(desc(`Total Docks`))
+
+top_docks_data = head(docks_data, 10)
+
+par(mfrow = c(1, 2)) #this doesn't work with ggplot graphics so I have to find another way to arrange them
+
+ggplot(data=top_docks_data, aes(x=reorder(NAME, -`Total Docks`), y=`Total Docks`)) +
+  geom_bar(stat="identity") + 
+  coord_flip() + 
+  labs(title = "Number of Docks (Top 10)", x='', y='') + 
+  theme_minimal()
+
+#tried to bring these plots on the same axes but base R is not good with that 
+hist(docks_data$`Total Docks`, main='Distribution of Number of Docks', xlab='', ylab='')
+boxplot(docks_data$`Total Docks`, main='Distribution of Number of Docks', horizontal=TRUE)
+```
+The distribution of the number of docks is heavily right-skewed. 
+```{r}
+#Grouping rides by start station
+#managing NAs in start station name/id
+sum(is.na(data$start_station_name)) #8
+sum(is.na(data$start_station_id)) #3200875
+sum(is.na(data$start_station_id_)) #24124
+
+data_by_start_station = data %>%
+                          group_by(start_station_name) %>%
+                          summarize(count = n())
+
+sum(is.na(docks_data$`Total Docks`))
+
+data_by_start_station = data_by_start_station %>%
+  left_join(docks_data, by = c("start_station_name" = "NAME")) 
+
+data_by_start_station = data_by_start_station %>%
+                          arrange(desc(`Total Docks`))
+
+dim(data_by_start_station)
+
+data_by_start_station$rides_by_docks = round(data_by_start_station$count/data_by_start_station$`Total Docks`)
+
+data_by_start_station = data_by_start_station %>%
+                          arrange(desc(rides_by_docks))
+
+data_by_start_station_top = head(data_by_start_station, 10)
+
+ggplot(data=data_by_start_station_top, aes(x=reorder(start_station_name, -rides_by_docks), y=`rides_by_docks`)) +
+  geom_bar(stat="identity") + 
+  coord_flip() + 
+  labs(title = "Ratio of Rides to Docks (Top 10)", x='', y='') + 
+  theme_minimal()
+
+data_by_start_station = data_by_start_station %>%
+                          arrange(desc(count))
+
+data_by_start_station_top = head(data_by_start_station, 10)
+
+ggplot(data=data_by_start_station_top, aes(x=reorder(start_station_name, -count), y=count)) +
+  geom_bar(stat="identity") + 
+  coord_flip() + 
+  labs(title = "Total Rides (Top 10)", x='', y='') + 
+  theme_minimal()
+
+plot(data_by_start_station$`Total Docks`, data_by_start_station$count, xlab='Number of Docks at Station', ylab='Number of Rides from Station')
+```
+It appears that there is lots of variation in the number of rides taken from a station regardless of how many docks it has. This indicates that the total number of docks is not a good linear predictor for the number of rides from a station. This could means that there is a mismatch between demand and supply and there is room to optimise the number of docks at each station. 
+
+
+```{r}
+data_by_start_station = data %>%
+                          group_by(start_station_name) %>%
+                          summarize(count = n())
+```
