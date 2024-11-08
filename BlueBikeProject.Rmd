@@ -1,0 +1,368 @@
+---
+title: "BlueBikesProject"
+output: html_document
+date: "2024-11-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r including_packages, include=FALSE}
+#including packages
+library(dplyr)
+library(purrr)
+library(readr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(plotly)
+library(scales)
+library(sinaplot)
+```
+
+#Loading data
+```{r, include=FALSE}
+setwd('/Users/mirayagupta/Desktop/DS104/bb2023')
+csv_file_list = dir()
+csv_file_list
+df_list = map(csv_file_list, read_csv)
+data = bind_rows(df_list)
+```
+
+#Exploring data
+```{r explore_data}
+dim(data)
+colnames(data)
+```
+
+#Handling missing values
+```{r missing_values}
+sum(is.na(data$tripduration)) #less than 10% of data
+sum(is.na(data$`start station id`)) #less than 10% of data
+sum(is.na(data$`end_lat`))
+
+# Get row indices where cols are NA
+no_tripdur_indices = which(is.na(data$tripduration))
+no_startid_indices = which(is.na(data$`start station id`))
+
+identical(no_tripdur_indices, no_startid_indices)
+# Drop these rows 
+data = data %>% slice(-no_tripdur_indices)
+sum(is.na(data$tripduration))
+```
+
+#Exploring bikeid variable
+```{r explore_bikeid}
+sum(is.na(data$bikeid)) #no missing values
+length(unique(data$bikeid)) #5005
+dim(data) # 2999792   
+range(data$bikeid)
+```
+
+#Adding columns with more information on month, season, etc.
+```{r add_data}
+data$tripduration = data$tripduration / 60 #converting sec to min
+data$month = month(data$starttime)
+data$day_of_week = wday(data$starttime)
+```
+
+```{r}
+data = data %>%
+  mutate(season = case_when(
+      month %in% c(12, 1, 2) ~ "Winter",
+      month %in% c(3, 4, 5) ~ "Spring",
+      month %in% c(6, 7, 8) ~ "Summer",
+      month %in% c(9, 10, 11) ~ "Fall"))
+```
+
+```{r}
+#simplified metric, not showing how many bikes are in use at any point in time but how many rides were started in that hour
+data = data[, !names(data) %in% "---"]
+data = data %>%
+  mutate(
+    starttime = ymd_hms(starttime),
+    stoptime = ymd_hms(stoptime)
+  )
+data$starthour = hour(data$starttime)
+```
+
+```{r}
+time_frame = seq(from = ymd_hms('2023-03-01 00:00:00'), 
+                  to = ymd_hms('2023-03-01 23:59:59'), 
+                  by = 'hour')
+
+bikes_in_use = data.frame(time = time_frame, bikes_in_use = 0)
+
+for (i in 1:nrow(bikes_in_use)) {
+  count = nrow(data %>%
+    filter(starttime <= bikes_in_use$time[i] & stoptime >= bikes_in_use$time[i]))
+  bikes_in_use$bikes_in_use[i] = count
+}
+
+# Print the results
+print(bikes_in_use)
+plot(bikes_in_use$time, bikes_in_use$bikes_in_use, main='Number of bikes in use at every hour, Mar 1 2023')
+```
+
+```{r}
+hourly_bike_usage = data.frame(hour = 0:23, avg_bikes_in_use = 0, med_bikes_in_use = 0, month = 0, day = 0, count_electric = 0)
+
+for (h in 0:23) {
+  # Filter data by hour
+  count_per_hour = data %>%
+    filter(hour(starttime) <= h & hour(stoptime) >= h) %>%
+    summarise(avg_bikes = mean(n()))
+  
+  #QUESTION: IS AVERAGE THE BEST SUMMARY STATISTIC TO USE HERE? 
+  hourly_bike_usage$avg_bikes_in_use[h + 1] = count_per_hour$avg_bikes
+}
+
+plot(hourly_bike_usage$hour, hourly_bike_usage$avg_bikes_in_use, type = "o", 
+     main = "Average Number of Bikes in Use at Each Hour of the Day (May 2022 - Apr 2023)",
+     xlab = "Hour of the Day", ylab = "Average Bikes in Use",
+     xaxt = "n")
+axis(1, at = 0:23) # Display hours from 0 to 23 on the x-axis
+```
+
+```{r}
+data_by_bike = data %>% 
+  group_by(bikeid) %>%
+  dplyr::summarise(med_duration = median(tripduration))
+data_by_bike
+dim(data_by_bike)
+boxplot(data_by_bike$med_duration)
+```
+
+#Bike usage by season
+
+```{r by_season}
+#QUESTION: IS IT RIGHT TO REPRESENT THIS AS A LINE GRAPH WHEN THE PATTERN IS CYCLICAL
+seasonal_hourly_bikes = data %>%
+  group_by(season, starthour) %>%
+  summarise(total_bikes_in_use = n(), .groups = "drop") # Corrected to count bikes in use
+
+ggplot(seasonal_hourly_bikes, aes(x = starthour, y = total_bikes_in_use, color = season, group = season)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Total Rides Begun at Each Hour",
+    x = "Time of Day",
+    y = "Rides",
+    color = "Season") +
+  scale_x_continuous(
+    breaks = seq(0, 23, by=4),
+    labels = format(strptime(seq(0, 23, by=4), format = "%H"), "%I:%M %p") ) +
+  scale_y_continuous(labels = label_comma()) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+hours = 0:23
+seasons = unique(data$season)
+
+bikes_in_use_by_season = expand.grid(hour=hours, season=seasons)
+bikes_in_use_by_season$bikes_in_use = 0
+
+for (s in seasons) {
+  for (h in hours) {
+    count = data %>%
+      filter(season == s, hour(starttime) <= h & hour(stoptime) >= h) %>%
+      nrow()
+    bikes_in_use_by_season$bikes_in_use[bikes_in_use_by_season$hour == h & bikes_in_use_by_season$season == s] = count
+  }
+}
+```
+
+```{r}
+seasons = c('Fall', 'Spring', 'Summer', 'Winter')
+ggplot(bikes_in_use_by_season, aes(x = hour, y = bikes_in_use, color = season, group = season)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Number of Bikes in Use at Each Hour by Season",
+    x = "Time of Day",
+    y = "Number of Bikes in Use",
+    color = "Season"
+  ) +
+  scale_x_continuous(
+    breaks = seq(0, 23, by = 4), 
+    labels = format(strptime(seq(0, 23, by = 4), format = "%H"), "%I:%M %p")
+  ) +
+  scale_y_continuous(labels = label_comma()) +  # Format y-axis without scientific notation
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+```{r}
+#QUESTIONS TO EXPLORE: COULD THE INCREASE IN RIDES OVER THE SUMMER BE ACCOUNTED FOR BY THE LATER NIGHT RIDES SEEN AFTER 8 PM?
+# WHY IS THERE SUCH A SHARP DIP IN THE SUMMER FOR RIDES BEGUN BETWEEN 4 AM AND 11 AM? 
+```
+
+#Bike usage by day of week
+```{r}
+bikes_in_use_by_day = expand.grid(day=day)
+bikes_in_use_by_season$bikes_in_use = 0
+
+days = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+
+data = data %>% mutate(day_of_week = wday(starttime, label = TRUE, abbr = FALSE))
+bikes_in_use_by_day = expand.grid(day_of_week = days, season = seasons)
+bikes_in_use_by_day$bikes_in_use = 0
+
+for (s in seasons) {
+  for (d in days) {
+    count = data %>%
+      filter(season == s, day_of_week == d) %>%
+      nrow()
+    bikes_in_use_by_day$bikes_in_use[bikes_in_use_by_day$day_of_week == d & bikes_in_use_by_day$season == s] = count
+  } }
+```
+
+```{r}
+ggplot(bikes_in_use_by_day, aes(x = day_of_week, y = bikes_in_use) +
+  geom_bar(stat = "identity") +  # stat = "identity" uses the values in 'bikes_in_use' directly
+  labs(
+    title = "Number of Bikes in Use per Day of the Week",
+    x = "Day of the Week",
+    y = "Number of Bikes in Use"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
+
+```
+
+```{r}
+combined_data = bind_rows(
+  mon_fall_bikes %>% mutate(season = "Fall", day_of_week = "Monday"),
+  mon_summer_bikes %>% mutate(season = "Summer", day_of_week = "Monday"),
+  mon_winter_bikes %>% mutate(season = "Winter", day_of_week = "Monday"),
+  mon_spring_bikes %>% mutate(season = "Spring", day_of_week = "Monday"),
+  
+  tue_fall_bikes %>% mutate(season = "Fall", day_of_week = "Tuesday"),
+  tue_summer_bikes %>% mutate(season = "Summer", day_of_week = "Tuesday"),
+  tue_winter_bikes %>% mutate(season = "Winter", day_of_week = "Tuesday"),
+  tue_spring_bikes %>% mutate(season = "Spring", day_of_week = "Tuesday"),
+  
+  wed_fall_bikes %>% mutate(season = "Fall", day_of_week = "Wednesday"),
+  wed_summer_bikes %>% mutate(season = "Summer", day_of_week = "Wednesday"),
+  wed_winter_bikes %>% mutate(season = "Winter", day_of_week = "Wednesday"),
+  wed_spring_bikes %>% mutate(season = "Spring", day_of_week = "Wednesday")
+)
+
+bikes_in_use_by_day_season = combined_data %>%
+  group_by(day_of_week, season) %>%
+  summarise(bikes_in_use = n()) 
+
+ggplot(bikes_in_use_by_day_season, aes(x = day_of_week, y = bikes_in_use, fill = season)) +
+  geom_bar(stat = "identity", position = "dodge") + 
+  labs(
+    title = "Number of Bikes in Use per Day of the Week by Season",
+    x = "Day of the Week",
+    y = "Number of Bikes in Use"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+```
+
+```{r}
+```
+
+#Tracking a single bike id
+```{r}
+by_bike_id = data %>% 
+  group_by(bikeid) %>%
+  dplyr::summarise(count = n(), )
+
+selected_id = 2006 #randomly chose this id to look at
+bike2006data = data[data$bikeid==2006, ]
+max(bike2006data$starttime)
+min(bike2006data$starttime) 
+bike2006data
+
+#QUESTION TO EXPLORE: HOW LONG ARE BIKES TYPICALLY IN USE? HOW MUCH IS EACH BIKE USED? BIKEID IS AN IMPORTANT VARIABLE FOR THIS
+```
+
+```{r}
+data = data %>%
+  mutate(
+    starttime = as.POSIXct(starttime),
+    stoptime = as.POSIXct(stoptime)     
+  )
+bike_usage_time_range = data %>%
+  group_by(bikeid) %>% 
+  summarise(
+    first_use = min(starttime), 
+    last_use = max(stoptime)) 
+bike_usage_time_range
+```
+
+#modelling
+```{r}
+library(rpart)
+library(rpart.plot)
+```
+
+```{r}
+
+data = data %>%
+  mutate(
+    hour = hour(starttime),  # Extract hour from starttime
+    day_of_week = wday(starttime, label = TRUE, abbr = FALSE),  # Day of the week
+    season = factor(season, levels = c("Winter", "Spring", "Summer", "Fall"))  # Ensure season is a factor
+  )
+
+cart_model = rpart(
+  bikes_in_use ~ hour + day_of_week + season + month + `start station name`,
+  data = data,
+  method = "anova",  # For regression trees
+  control = rpart.control(minsplit = 20)  # Control tree growth
+)
+
+# View the model
+print(cart_model)
+
+# Plot the tree
+rpart.plot(cart_model, main = "CART Model for Predicting Bikes in Use")
+
+# Make predictions
+predictions = predict(cart_model, newdata = data)
+
+# Check model performance (e.g., Mean Absolute Error)
+mae = mean(abs(predictions - data$bikes_in_use))
+print(paste("Mean Absolute Error: ", mae))
+```
+
+
+
+```{r}
+sinaplot(data$tripduration, data$season,col=alpha("orange",.2))
+```
+
+```{r}
+bikes_in_use_by_hour = data %>%
+  mutate(starthour = hour(starttime)) %>%
+  group_by(starthour) %>%
+  summarise(
+    bikes_in_use = sum(starttime <= starthour & stoptime >= starthour)
+  )
+
+# Join this information back to the original dataset
+data_with_bikes_in_use = data %>%
+  left_join(bikes_in_use_by_hour, by = "starthour")
+
+# View the updated dataset
+head(data_with_bikes_in_use)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
