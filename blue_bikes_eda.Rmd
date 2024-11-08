@@ -35,6 +35,7 @@ dim(data)
 colnames(data)
 summary(data)
 ```
+
 ```{r}
 print('start station id')
 sum(is.na(data$`start station id`))
@@ -251,3 +252,77 @@ data_by_start_station = data %>%
                           group_by(start_station_name) %>%
                           summarize(count = n())
 ```
+
+```{r}
+# another categorical variable by station
+data$startstation<-"Other"
+data$startstation[data$start_station_id=="M32004"]<-"Kendall"
+data$startstation[data$start_station_id%in%c("M32042",
+		"M32006","M32070","M32071","M32041","M32005")]<-"MIT" 
+data$startstation[data$start_station_id=="B32000"]<-"NewburySt"
+data$startstation[data$start_station_id=="C32007"]<-"Prudential"
+data$startstation[data$start_station_id%in%c("M32016", "M32020",
+			"M32017","M32018","A32052","M32023","M32021",
+			"M32014","M32024","M32038")]<-"Harvard"
+data$startstation[data$start_station_id%in%c("M32012", "M32011",
+					"A32041")]<-"Central"
+data$startstation[data$start_station_id%in%c("M32059",
+					"M32037")]<-"Ames"
+
+table(data$startstation)
+```
+
+#use class 7 code to categorise by areas 
+
+```{r}
+setwd('/Users/mirayagupta/Desktop/DS104/bb2023')
+csv_file_list = dir()
+csv_file_list
+list = c("202301-bluebikes-tripdata.csv", "202302-bluebikes-tripdata.csv" ,"202303-bluebikes-tripdata.csv")
+df_list = map(list, read_csv)
+data = bind_rows(df_list)
+```
+
+```{r}
+head(data)
+colnames(data)
+```
+
+```{r explore_bikeid}
+sum(is.na(data$bikeid)) #no missing values
+length(unique(data$bikeid)) #3836
+dim(data) # 492318     14
+range(data$bikeid)
+```
+
+```{r}
+data = data %>%
+  mutate(
+    starttime = ymd_hms(starttime),
+    stoptime = ymd_hms(stoptime)
+  )
+time_frame = seq(from = ymd_hms('2023-03-01 00:00:00'), 
+                  to = ymd_hms('2023-03-01 23:59:59'), 
+                  by = 'hour')
+
+bikes_in_use = data.frame(time = time_frame, bikes_in_use = 0)
+
+for (i in 1:nrow(bikes_in_use)) {
+  count = nrow(data %>%
+    filter(starttime <= bikes_in_use$time[i] & stoptime >= bikes_in_use$time[i]))
+  bikes_in_use$bikes_in_use[i] = count
+}
+
+# Print the results
+print(bikes_in_use)
+plot(bikes_in_use$time, bikes_in_use$bikes_in_use, main='Number of bikes in use at every hour, Mar 1 2023')
+```
+
+```{r}
+data_by_bike = data %>%
+    group_by(bikeid) %>%
+  summarise(duration = tripduration)
+
+head(data_by_bike)
+```
+
