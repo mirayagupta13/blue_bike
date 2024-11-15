@@ -85,6 +85,7 @@ data = data %>%
     stoptime = ymd_hms(stoptime)
   )
 data$starthour = hour(data$starttime)
+data$startday = as.Date(data$starttime)
 ```
 
 ```{r}
@@ -127,7 +128,7 @@ axis(1, at = 0:23) # Display hours from 0 to 23 on the x-axis
 
 ```{r}
 data_by_bike = data %>% 
-  group_by(bikeid) %>%
+  group_by(bikeid, season) %>%
   dplyr::summarise(med_duration = median(tripduration))
 data_by_bike
 dim(data_by_bike)
@@ -140,7 +141,7 @@ boxplot(data_by_bike$med_duration)
 #QUESTION: IS IT RIGHT TO REPRESENT THIS AS A LINE GRAPH WHEN THE PATTERN IS CYCLICAL
 seasonal_hourly_bikes = data %>%
   group_by(season, starthour) %>%
-  summarise(total_bikes_in_use = n(), .groups = "drop") # Corrected to count bikes in use
+  dplyr::summarise(total_bikes_in_use = n(), .groups = "drop") # Corrected to count bikes in use
 
 ggplot(seasonal_hourly_bikes, aes(x = starthour, y = total_bikes_in_use, color = season, group = season)) +
   geom_line() +
@@ -205,7 +206,7 @@ ggplot(bikes_in_use_by_season, aes(x = hour, y = bikes_in_use, color = season, g
 
 #Bike usage by day of week
 ```{r}
-bikes_in_use_by_day = expand.grid(day=day)
+bikes_in_use_by_day = expand.grid(day=days())
 bikes_in_use_by_season$bikes_in_use = 0
 
 days = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
@@ -224,7 +225,24 @@ for (s in seasons) {
 ```
 
 ```{r}
-ggplot(bikes_in_use_by_day, aes(x = day_of_week, y = bikes_in_use) +
+library(RColorBrewer)
+season_colors <- brewer.pal(4, "Set1")
+
+# Plot bike usage by day of the week and season (bar plot)
+ggplot(bikes_in_use_by_day, aes(x = day_of_week, y = bikes_in_use, fill = season)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Bike Usage by Day of the Week and Season",
+       x = "Day of the Week",
+       y = "Bikes in Use") +
+  scale_x_discrete(limits = c('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')) +
+  theme_minimal() +
+  scale_fill_manual(values = season_colors) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# Corrected ggplot code with a closing parenthesis
+ggplot(bikes_in_use_by_day, aes(x = days, y = bikes_in_use)) +
   geom_bar(stat = "identity") +  # stat = "identity" uses the values in 'bikes_in_use' directly
   labs(
     title = "Number of Bikes in Use per Day of the Week",
@@ -236,42 +254,148 @@ ggplot(bikes_in_use_by_day, aes(x = day_of_week, y = bikes_in_use) +
 
 ```
 
+
 ```{r}
-combined_data = bind_rows(
-  mon_fall_bikes %>% mutate(season = "Fall", day_of_week = "Monday"),
-  mon_summer_bikes %>% mutate(season = "Summer", day_of_week = "Monday"),
-  mon_winter_bikes %>% mutate(season = "Winter", day_of_week = "Monday"),
-  mon_spring_bikes %>% mutate(season = "Spring", day_of_week = "Monday"),
-  
-  tue_fall_bikes %>% mutate(season = "Fall", day_of_week = "Tuesday"),
-  tue_summer_bikes %>% mutate(season = "Summer", day_of_week = "Tuesday"),
-  tue_winter_bikes %>% mutate(season = "Winter", day_of_week = "Tuesday"),
-  tue_spring_bikes %>% mutate(season = "Spring", day_of_week = "Tuesday"),
-  
-  wed_fall_bikes %>% mutate(season = "Fall", day_of_week = "Wednesday"),
-  wed_summer_bikes %>% mutate(season = "Summer", day_of_week = "Wednesday"),
-  wed_winter_bikes %>% mutate(season = "Winter", day_of_week = "Wednesday"),
-  wed_spring_bikes %>% mutate(season = "Spring", day_of_week = "Wednesday")
-)
+days_of_week <- c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
 
-bikes_in_use_by_day_season = combined_data %>%
-  group_by(day_of_week, season) %>%
-  summarise(bikes_in_use = n()) 
+# Create a data frame to hold the number of bikes in use by day of the week
+bikes_in_use_by_day <- data.frame(day_of_week = days_of_week, bikes_in_use = 0)
 
-ggplot(bikes_in_use_by_day_season, aes(x = day_of_week, y = bikes_in_use, fill = season)) +
-  geom_bar(stat = "identity", position = "dodge") + 
+# Loop through each day of the week to calculate the number of bikes in use
+for (day in days_of_week) {
+  count <- data %>%
+    filter(wday(starttime, label = TRUE, abbr = FALSE) == day) %>%
+    nrow()
+  
+  bikes_in_use_by_day$bikes_in_use[bikes_in_use_by_day$day_of_week == day] <- count
+}
+
+# Plot the data
+ggplot(bikes_in_use_by_day, aes(x = day_of_week, y = bikes_in_use)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
   labs(
-    title = "Number of Bikes in Use per Day of the Week by Season",
+    title = "Number of Bikes in Use by Day of the Week",
     x = "Day of the Week",
     y = "Number of Bikes in Use"
   ) +
+  scale_y_continuous(labels = scales::comma) +  # Format y-axis without scientific notation
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+##Mapping bikes across Boston
+```{r}
+#many NA values in the start station latitude and longitude
+library(leaflet)
+march13 = data %>%
+  filter(starttime >= "2023-03-13 00:00:00" & starttime < "2023-03-14 00:00:00")
+bikes_in_use = march13 %>%
+  group_by(`start station name`, `start station latitude`, `start station longitude`) %>%
+  dplyr::summarise(bikes_in_use = n(), med_duration = median(tripduration))
+leaflet(bikes_in_use) %>%
+  addTiles() %>%  
+  setView(lng = -71.0589, lat = 42.3601, zoom = 12) %>%
+  addCircleMarkers(
+    lng = ~`start station longitude`, 
+    lat = ~ `start station latitude`, 
+    radius = ~(bikes_in_use/10),  
+    popup = ~paste(
+      "Station: ", `start station name`, 
+      "<br>Bikes in use: ", bikes_in_use),
+    color = ~ifelse(bikes_in_use > 20, "red", "blue"),  
+    fillOpacity = 0.6
+  )
 ```
 
 ```{r}
+#many NA values in the start station latitude and longitude
+library(leaflet)
+june30 = data %>%
+  filter(starttime >= "2022-07-30 00:00:00" & starttime < "2022-08-1 00:00:00")
+bikes_in_use = march13 %>%
+  group_by(`start station name`, `start station latitude`, `start station longitude`) %>%
+  dplyr::summarise(bikes_in_use = n(), med_duration = median(tripduration))
+leaflet(bikes_in_use) %>%
+  addTiles() %>%  
+  setView(lng = -71.0589, lat = 42.3601, zoom = 12) %>%
+  addCircleMarkers(
+    lng = ~`start station longitude`, 
+    lat = ~ `start station latitude`, 
+    radius = ~(bikes_in_use/10),  
+    popup = ~paste(
+      "Station: ", `start station name`, 
+      "<br>Bikes in use: ", bikes_in_use),
+    color = ~ifelse(bikes_in_use > 20, "red", "blue"),  
+    fillOpacity = 0.6
+  )
 ```
 
+```{r}
+library(leaflet.extras)
+library(shiny)
+
+ui = fluidPage(
+  titlePanel("Bike Usage Map with Time Slider"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("timeSlider", 
+                  "Select Date", 
+                  min = min(data$startday), 
+                  max = max(data$startday), 
+                  value = min(data$startday), 
+                  timeFormat = "%Y-%m-%d")
+    ),
+    
+    mainPanel(
+      leafletOutput("bikeMap")
+    )
+  )
+)
+
+server = function(input, output, session) {
+  
+  output$bikeMap <- renderLeaflet({
+    
+    # Filter data based on date
+    data_filtered <- data %>%
+      filter(date == input$timeSlider)
+    
+
+    leaflet(data_filtered) %>%
+      addTiles() %>%
+      setView(lng = -71.0589, lat = 42.3601, zoom = 12) %>%
+      addCircleMarkers(
+        lng = ~`start station longitude`,
+        lat = ~`start station latitude`,
+        radius = ~(bikes_in_use/10) ,
+        popup = ~paste("Station: ", `start station name`, "<br>Bikes in use: ", bikes_in_use),
+        color = ~ifelse(bikes_in_use > 20, "red", "green"),
+        fillOpacity = 0.6
+      )
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+##Modelling
+```{r}
+data$usertype <- factor(data$usertype)
+data$day_of_week <- weekdays(data$starttime)
+data_station_usage = data %>%
+  group_by(`start station name`, startday) %>%
+  dplyr::summarise(bikes_in_use = n())
+
+data_station_usage <- data_station_usage %>%
+  left_join(data %>%
+              dplyr:::select(`start station name`, starttime, day_of_week, season, starthour, usertype),
+            by = c("start station name", "starttime"))
+
+
+
+
+```
 #Tracking a single bike id
 ```{r}
 by_bike_id = data %>% 
@@ -360,9 +484,19 @@ head(data_with_bikes_in_use)
 ```
 
 ```{r}
-
+setwd('/Users/mirayagupta/Desktop/DS104')
+station_data = read.csv("current_bluebikes_stations.csv")
+new_headers = station_data[1,]
+colnames(station_data) = new_headers
+station_data = station_data[-1, ]
+colnames(station_data)
+station_data = station_data %>%
+                  mutate(`Total Docks` = as.numeric(`Total Docks`)) #this is coded as a character
+dim(station_data)
+summary(station_data)
 ```
 
 ```{r}
-
+combined_data <- data %>%
+  left_join(station_data, by = c("start station id" = "Station ID (to match to historic system data)"))
 ```
