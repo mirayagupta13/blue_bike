@@ -25,7 +25,7 @@ library(ggridges)
 library(leaflet)
 ```
 
-#Loading data
+## Exploratory Data Analysis
 ```{r, include=FALSE}
 setwd('/Users/mirayagupta/Desktop/DS104/bb2023')
 csv_file_list = dir()
@@ -34,17 +34,16 @@ df_list = map(csv_file_list, read_csv)
 data = bind_rows(df_list)
 ```
 
-#Exploring data
+
 ```{r explore_data}
 dim(data)
 colnames(data)
+colSums(is.na(data))
 ```
-
-#Handling missing values
+## Handling Missingness
 ```{r missing_values}
 sum(is.na(data$tripduration)) #less than 10% of data
 sum(is.na(data$`start station id`)) #less than 10% of data
-sum(is.na(data$`end_lat`))
 
 # Get row indices where cols are NA
 no_tripdur_indices = which(is.na(data$tripduration))
@@ -54,11 +53,12 @@ identical(no_tripdur_indices, no_startid_indices)
 # Drop these rows 
 data = data %>% slice(-no_tripdur_indices)
 sum(is.na(data$tripduration))
-
-#check if i can impute was it a cwrtain month? 
 ```
 
-#Exploring bikeid variable
+```{r}
+colSums(is.na(data))
+```
+
 ```{r explore_bikeid}
 sum(is.na(data$bikeid)) #no missing values
 length(unique(data$bikeid)) #5005
@@ -66,14 +66,22 @@ dim(data) # 2999792
 range(data$bikeid)
 ```
 
-#Adding columns with more information on month, season, etc.
-```{r add_data}
+## Data Cleaning
+```{r add_cols}
 data$tripduration = data$tripduration / 60 #converting sec to min
 data$month = month(data$starttime)
 data$day_of_week = wday(data$starttime)
 ```
 
-```{r}
+```{r add_cols}
+data$starthour = hour(data$starttime)
+data$endhour = hour(data$stoptime)
+data$startday = as.Date(data$starttime)
+data$year = year(data$starttime)
+```
+
+
+```{r add_season}
 data = data %>%
   mutate(season = case_when(
       month %in% c(12, 1, 2) ~ "Winter",
@@ -83,15 +91,12 @@ data = data %>%
 ```
 
 ```{r}
-#simplified metric, not showing how many bikes are in use at any point in time but how many rides were started in that hour
 data = data[, !names(data) %in% "---"]
 data = data %>%
   mutate(
     starttime = ymd_hms(starttime),
     stoptime = ymd_hms(stoptime)
   )
-data$starthour = hour(data$starttime)
-data$startday = as.Date(data$starttime)
 ```
 
 ```{r}
@@ -112,6 +117,7 @@ print(bikes_in_use)
 plot(bikes_in_use$time, bikes_in_use$bikes_in_use, main='Number of bikes in use at every hour, Mar 1 2023')
 ```
 
+## Bike Usage by Hour, Season, Time of Day
 ```{r}
 hourly_bike_usage = data.frame(hour = 0:23, avg_bikes_in_use = 0, med_bikes_in_use = 0, month = 0, day = 0, count_electric = 0)
 
@@ -119,16 +125,16 @@ for (h in 0:23) {
   # Filter data by hour
   count_per_hour = data %>%
     filter(hour(starttime) <= h & hour(stoptime) >= h) %>%
-    summarise(avg_bikes = mean(n()))
+    summarise(avg_bikes = mean(bikes_in_use, na.rm = TRUE)) # Replace `bikes_in_use` with your actual column name
   
-  #QUESTION: IS AVERAGE THE BEST SUMMARY STATISTIC TO USE HERE? 
+  # Assign the result to the dataframe
   hourly_bike_usage$avg_bikes_in_use[h + 1] = count_per_hour$avg_bikes
 }
 
 plot(hourly_bike_usage$hour, hourly_bike_usage$avg_bikes_in_use, type = "o", 
      main = "Average Number of Bikes in Use at Each Hour of the Day (May 2022 - Apr 2023)",
      xlab = "Hour of the Day", ylab = "Average Bikes in Use",
-     xaxt = "n")
+     xaxt = "n", ylim = c(0, max(hourly_bike_usage$avg_bikes_in_use, na.rm = TRUE)))
 axis(1, at = 0:23) # Display hours from 0 to 23 on the x-axis
 ```
 
@@ -140,8 +146,6 @@ data_by_bike
 dim(data_by_bike)
 boxplot(data_by_bike$med_duration)
 ```
-
-#Bike usage by season
 
 ```{r by_season}
 #QUESTION: IS IT RIGHT TO REPRESENT THIS AS A LINE GRAPH WHEN THE PATTERN IS CYCLICAL
@@ -210,10 +214,9 @@ ggplot(bikes_in_use_by_season, aes(x = hour, y = bikes_in_use, color = season, g
 # WHY IS THERE SUCH A SHARP DIP IN THE SUMMER FOR RIDES BEGUN BETWEEN 4 AM AND 11 AM? 
 ```
 
-#Bike usage by day of week
-```{r}
+
+```{r by_day}
 bikes_in_use_by_day = expand.grid(day=days())
-bikes_in_use_by_season$bikes_in_use = 0
 
 days = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
 
@@ -230,7 +233,7 @@ for (s in seasons) {
   } }
 ```
 
-```{r}
+```{r barplot}
 season_colors <- brewer.pal(4, "Set1")
 # Plot bike usage by day of the week and season (bar plot)
 ggplot(bikes_in_use_by_day, aes(x = day_of_week, y = bikes_in_use, fill = season)) +
@@ -244,24 +247,22 @@ ggplot(bikes_in_use_by_day, aes(x = day_of_week, y = bikes_in_use, fill = season
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-```{r}
+```{r heatmap}
 #heatmap of day of week and season
-season_colors = brewer.pal(4, "Set1")
-
 ggplot(bikes_in_use_by_day, aes(x = day_of_week, y = season, fill = bikes_in_use)) +
-  geom_tile() +  # Use tiles for heatmap
+  geom_tile() +
   labs(title = "Bike Usage by Day of the Week (Column Scaled)",
        x = "",
        y = "",
-       fill = "Bikes in Use") +
+       fill = "") +
   scale_x_discrete(limits = c('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')) +
-  scale_y_discrete(limits = c('Summer', 'Fall', 'Winter', 'Spring')) + 
-  scale_fill_gradientn(colors = brewer.pal(9, "Reds")) +
+  scale_y_discrete(limits = c('Winter', 'Spring', 'Summer', 'Fall')) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-```{r}
+```{r heatmap}
 #base R heatmap
 palette = colorRampPalette(brewer.pal(9, "Reds"))(100)
 heatmap_data = reshape(bikes_in_use_by_day, 
@@ -271,7 +272,6 @@ heatmap_data = reshape(bikes_in_use_by_day,
 sunday = heatmap_data[,2]
 heatmap_data_ordered = cbind(heatmap_data[,-2], sunday)
 colnames(heatmap_data) <- c("season", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", 'Sun')
-
 
 rownames(heatmap_data) = heatmap_data$season
 heatmap_matrix = as.matrix(heatmap_data[, -1])  
@@ -298,40 +298,70 @@ title("Bike Usage by Day of the Week (Row-Scaled)", cex.main = 1, adj = 0.3, lin
 - reorder the seasons + legend
 - more colours 
 
-```{r}
-#heatmap of day of week and time of day (morning, afternoon, evening)
+```{r heatmap}
+#sunrise and sunset times
+sunrise = c("07:00:00", "06:00:00", "05:00:00", "06:00:00")
+sunset = c("16:30:00", "19:00:00", "20:00:00", "17:30:00") 
+
+sunrise_posix = as.POSIXct(sunrise, format="%H:%M:%S")
+sunset_posix  = as.POSIXct(sunset, format="%H:%M:%S")
+
+# Create a table
+sun_data = data.frame(
+  season = seasons,
+  sunrise = format(sunrise_posix, "%H:%M:%S"),
+  sunset = format(sunset_posix, "%H:%M:%S")
+)
+
+
 ggplot(bikes_in_use_by_season, aes(x = hour, y = season, fill = bikes_in_use)) +
   geom_tile() +
-  scale_fill_gradientn(colors = brewer.pal(9, "Blues")) +  
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
   labs(
     title = "Number of Bikes in Use at Each Hour by Season",
     x = "",
     y = "",
-    fill = "Bikes in Use"
+    fill = ""
   ) +
   scale_x_continuous(
-    breaks = seq(0, 23, by = 4), 
+    breaks = seq(0, 23, by = 4),
     labels = format(strptime(seq(0, 23, by = 4), format = "%H"), "%I:%M %p")
   ) +
-  scale_y_discrete(limits = c('Fall', 'Spring', 'Summer', 'Winter')) +  # Order the seasons
+  scale_y_discrete(limits = c('Winter', 'Spring', 'Summer', 'Fall')) + 
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
 ```
-- how useful is this versus the line plot? 
-- fall highly used between 8 am and 8 pm as compared to other seasons
-- spring higher use between 4 pm and 11 pm
-- average sunrise. sunset
+how useful is this versus the line plot? 
+fall highly used between 8 am and 8 pm as compared to other seasons
+spring higher use between 4 pm and 11 pm
+average sunrise. sunset
 
 ```{r}
-#heatmap of day of week and time of day (morning, afternoon, evening)
-ggplot(bikes_in_use_by_day, aes(x = hour, y = day_of_week, fill = bikes_in_use)) +
+days = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+starthour = unique(data$starthour)
+
+in_use_by_day = expand.grid(day_of_week = days, hour = starthour)
+in_use_by_day$bikes_in_use = 0
+
+for (h in 0:23) {
+  for (d in days) {
+    count = data %>%
+      filter(starthour == h, day_of_week == d) %>%
+      nrow()
+    in_use_by_day$bikes_in_use[in_use_by_day$day_of_week == d & in_use_by_day$hour == h] = count
+  } }
+```
+
+```{r heatmap}
+#heatmap of day of week and time of day
+ggplot(in_use_by_day, aes(x = hour, y = day_of_week, fill = bikes_in_use)) +
   geom_tile() +
-  scale_fill_gradientn(colors = brewer.pal(9, "Blues")) +  
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +  
   labs(
-    title = "Number of Bikes in Use at Each Hour by Season",
-    x = "Time of Day",
-    y = "Season",
-    fill = "Bikes in Use"
+    title = "Number of Bikes in Use at Each Hour by Weekday",
+    x = "",
+    y = "",
+    fill = ""
   ) +
   scale_x_continuous(
     breaks = seq(0, 23, by = 4), 
@@ -340,9 +370,8 @@ ggplot(bikes_in_use_by_day, aes(x = hour, y = day_of_week, fill = bikes_in_use))
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
-```
 
-```{r}
+```{r ridge_plot, include=FALSE}
 #ridge line plot
 ggplot(bikes_in_use_by_season, aes(x = bikes_in_use, y = season, fill = hour)) +
   geom_density_ridges(scale = 2, alpha = 0.7) + 
@@ -358,17 +387,9 @@ ggplot(bikes_in_use_by_season, aes(x = bikes_in_use, y = season, fill = hour)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-```{r}
-# plotly zoomable plot of time? 
-```
-
-```{r}
-
-```
 
 
-##Mapping bikes across Boston
-```{r}
+```{r map}
 #many NA values in the start station latitude and longitude
 march13 = data %>%
   filter(starttime >= "2023-03-13 00:00:00" & starttime < "2023-03-14 00:00:00")
@@ -390,7 +411,7 @@ leaflet(bikes_in_use) %>%
   )
 ```
 
-```{r}
+```{r map}
 #many NA values in the start station latitude and longitude
 june30 = data %>%
   filter(starttime >= "2022-07-30 00:00:00" & starttime < "2022-08-1 00:00:00")
@@ -412,7 +433,7 @@ leaflet(bikes_in_use) %>%
   )
 ```
 
-```{r}
+```{r map}
 library(leaflet.extras)
 library(shiny)
 
@@ -447,21 +468,7 @@ server = function(input, output, session) {
 shinyApp(ui = ui, server = server)
 ```
 
-##Modelling
-```{r}
-data$usertype <- factor(data$usertype)
-data$day_of_week <- weekdays(data$starttime)
-data_station_usage = data %>%
-  group_by(`start station name`, startday) %>%
-  dplyr::summarise(bikes_in_use = n())
-
-data_station_usage <- data_station_usage %>%
-  left_join(data %>%
-              dplyr:::select(`start station name`, starttime, day_of_week, season, starthour, usertype),
-            by = c("start station name", "starttime"))
-```
-
-#Tracking bike-level data
+## Tracking bike-level data
 ```{r}
 by_bike_id = data %>% 
   group_by(bikeid) %>%
@@ -472,61 +479,236 @@ by_bike_id = data %>%
 
 ```{r}
 #HOW LONG ARE BIKES TYPICALLY IN USE? HOW MUCH IS EACH BIKE USED?
-par(mfrow = c(1, 2))
-sinaplot(by_bike_id$count, col=alpha("lightblue1",.2))
-hist(by_bike_id$count, main='Rides completed per bike May 22 - Apr 23', col='lightblue1', breaks = 50)
-range(by_bike_id$count)
-summary(by_bike_id$count)
+library(gridExtra)
 
-by_bike_id$days_available = as.numeric(by_bike_id$last_used - by_bike_id$first_used) / 60 / 24
-summary(by_bike_id$days_available)
-sinaplot(by_bike_id$days_available, col=alpha("lightblue1",.2), main='Days Bikes are Available')
-
-par(mfrow = c(1, 3))
-sinaplot(by_bike_id$med_ride_duration, col=alpha("lightblue1",.2), ylab='Median Trip Duration')
-hist(by_bike_id$med_ride_duration, col='lightblue1', breaks=50)
-boxplot(by_bike_id$med_ride_duration)
-
+by_bike_id$days_available = ceiling(as.numeric(by_bike_id$last_used - by_bike_id$first_used) / 60 / 24)
 by_bike_id$utilisation = by_bike_id$days_used/by_bike_id$days_available
-hist(by_bike_id$utilisation[by_bike_id$utilisation <= 1], bins=c(0,1,0.01))
-#how to visualise this? 
-#since the days available is also defined using only the trips information, 
+by_bike_id$utilisation[by_bike_id$utilisation > 1] = 1
+
+
+median_value <- median(by_bike_id$count)
+p1 = ggplot(by_bike_id, aes(x = count)) +
+  geom_histogram(color = 'yellow', fill = "lightyellow", bins = 50) +
+  labs(title = "Rides per Bike", x = "", y = "") +
+  theme_minimal() + 
+  geom_boxplot(width = 0.1, color='yellow', fill = "lightyellow") +
+  geom_vline(xintercept = median_value, color = "red", linetype = "dashed") 
+
+
+p2 = ggplot(by_bike_id, aes(x = days_available, y = count, color = utilisation > 0.5)) +
+    geom_point(alpha=0.5, fill='yellow', color='lightblue') +
+#    scale_color_manual(values = c("FALSE" = "yellow", "TRUE" = "lightgreen")) +
+    labs(x = "", y = "") +
+    theme_minimal() + 
+    theme(legend.position = "top")
+
+#sinaplot(by_bike_id$days_available, col=alpha("lightblue1",.2), main='Days Bikes are Available')
+median_ut = median(by_bike_id$utilisation)
+p3 = ggplot(by_bike_id, aes(x = utilisation)) +
+     geom_histogram(fill = "lightgreen", color = "green", bins = 30, alpha = 0.7) +
+     geom_vline(xintercept = median_ut, color = "red", linetype = "dashed") +
+     labs(x = "", y = "", title='Distribution of utilisation') +
+     theme_minimal()
+
+#grid.arrange(p1, p2, p3, ncol = 2)
+print(p1)
+print(p2)
+print(p3)
 ```
-- hist versus sinaplot? 
 
-
-#Modelling
+## Modelling with regression
 ```{r}
-library(rpart)
-library(rpart.plot)
-library(forecast) #time series model
+bikes_in_use_by_hour = data.frame(
+  date = integer(),
+  bikes_in_use = integer(),
+  hour = integer() ) 
+
+all_days = unique(data$startday)
+
+for (day in all_days) {
+  day = as.Date(day)
+  #subset data to get all rides from that day
+  all_rides = data[data$startday == day, ]
+  for (h in 0:23) {
+    count_per_hour = all_rides %>%
+    filter(starthour <= h & endhour >= h) %>%
+    dplyr::summarise(count = n() )
+    
+    bikes_in_use_by_hour = rbind(
+      bikes_in_use_by_hour,
+      data.frame(date = day, hour = h, bikes_in_use = count_per_hour$count) )
+  }
+}
 ```
 
 ```{r}
-data = data %>%
+#adding season, month, year
+bikes_in_use_by_hour = bikes_in_use_by_hour %>%
   mutate(
-    hour = starttime,  
-    day_of_week = wday(starttime, label = TRUE, abbr = FALSE), 
-    season = factor(season, levels = c("Winter", "Spring", "Summer", "Fall")) 
+    year = year(date),
+    month = month(date, label = TRUE, abbr = TRUE),
+    day_of_week = wday(date, label = TRUE, abbr = TRUE),
+    is_weekend = ifelse(wday(date) %in% c(1, 7), 1, 0)  #1 for weekend, 0 for weekday
   )
 
-cart_model = rpart(
-  bikes_in_use ~ hour + day_of_week + season + month + `start station name`,
-  data = data,
-  method = "anova",  
-  control = rpart.control(minsplit = 20)  
-)
+get_season = function(date) {
+  date = as.Date(date)
+  
+  if (date <= as.Date("2022-03-21") | (date >= as.Date("2022-12-21") & date < as.Date("2023-03-20"))) {
+    return("Winter")
+  } else if (date <= as.Date("2022-06-21")) {
+    return("Spring")
+  } else if (date <= as.Date("2022-09-22")) {
+    return("Summer")
+  } else if (date <= as.Date("2022-12-21")) {
+    return("Fall")
+  } else {
+    return(NA)
+  }
+}
 
-# View the model
-print(cart_model)
 
-# Plot the tree
-rpart.plot(cart_model, main = "CART Model for Predicting Bikes in Use")
+#bikes_in_use_by_hour <- bikes_in_use_by_hour %>%
+ # mutate(season = sapply(date, get_season))
+```
 
-# Make predictions
-predictions = predict(cart_model, newdata = data)
+## Fitting Linear Model
 
-# Check model performance (e.g., Mean Absolute Error)
-mae = mean(abs(predictions - data$bikes_in_use))
-print(paste("Mean Absolute Error: ", mae))
+```{r multicollinearity}
+names(bikes_in_use_by_hour)
+numeric_data = bikes_in_use_by_hour %>%
+  select(where(is.numeric))
+corr_matrix = cor(numeric_data, use = "complete.obs")
+corr_matrix #none of the numeric predictors are highly correlated
+```
+```{r factors}
+bikes_in_use_by_hour$month <- factor(bikes_in_use_by_hour$month, ordered = FALSE)
+bikes_in_use_by_hour$day_of_week <- factor(bikes_in_use_by_hour$day_of_week, ordered = FALSE)
+```
+
+```{r preliminary_lm}
+lm_all = lm(bikes_in_use ~ ., data=bikes_in_use_by_hour)
+summary(lm_all) #automatically fits a more complex model
+
+lm_numerical = lm(bikes_in_use ~ date+hour, data=bikes_in_use_by_hour)
+summary(lm_numerical)
+
+lm_categorical = lm(bikes_in_use~month+day_of_week+is_weekend, data=bikes_in_use_by_hour)
+summary(lm_categorical)
+```
+
+
+```{r}
+second_order = lm(bikes_in_use~.^2, data = bikes_in_use_by_hour)
+summary(second_order)
+
+library(caret)
+ctrl <- trainControl(method = "cv", number = 10)
+second_order_model_cv <- train(bikes_in_use ~ hour + month + day_of_week + hour:month, data = bikes_in_use_by_hour, method = "lm", trControl = ctrl)
+second_order_model_cv
+```
+
+```{r automatic_selection_aic}
+full_model = lm(bikes_in_use ~ ., data=bikes_in_use_by_hour)
+step_aic = step(full_model, direction='both', k=2) #using aic
+summary(step_aic) #Adjusted R-squared:  0.4097
+step_bic = step(full_model, direction='both', k=log(nrow(bikes_in_use_by_hour))) #using bic
+summary(step_bic) #Adjusted R-squared:  0.4097
+```
+
+```{r automatic_selection}
+sqrt(mean(step_aic$resid^2)) # 419.184
+sqrt(mean(step_bic$resid^2)) #  419.184
+BIC(step_aic) #130832.6
+BIC(step_bic) #130832.6
+```
+
+```{r}
+model_comparison <- data.frame(
+  model = c("interaction1", "interaction2", "quadratic"),
+  coeffs = c("hour,month,day,hour:month,month:day,hour:day", 
+             "hour,month,day,hour:month", 
+             "hour*month,month*day,hour*day,hour^2*month,hour^2*day"),
+  rmse = c(394, 399, 397),
+  Rsq = c(0.470, 0.464, 0.471),
+  AIC = c(129765, 129837, 126620))
+model_comparison
+```
+
+```{r}
+quad = lm(formula = bikes_in_use ~ hour + I(hour^2) +month + day_of_week + hour:month + 
+       month:day_of_week + hour:day_of_week + I(hour^2):day_of_week + I(hour^2):month, data = bikes_in_use_by_hour)
+ctrl <- trainControl(method = "cv", number = 10)
+model_cv_quad <- train(bikes_in_use ~ hour + I(hour^2) + month + day_of_week + hour:month, data = bikes_in_use_by_hour, method = "lm", trControl = ctrl)
+model_cv_quad
+BIC(quad)
+```
+
+```{r}
+d = data.frame(pred = second_order_aic$fitted.values, 
+               actual = bikes_in_use_by_hour$bikes_in_use,
+               hour = bikes_in_use_by_hour$hour)
+plot(, )
+```
+Identical models
+
+```{r second_order_model}
+second_order_aic = step(step_aic, ~.^2, direction="both", k=2)
+second_order_bic = step(step_aic, .~.^2, direction="both", k=log(nrow(bikes_in_use_by_hour)))
+```
+
+```{r}
+sqrt(mean(second_order_aic$resid^2)) #393.8592
+sqrt(mean(second_order_bic$resid^2)) #398.7439
+BIC(second_order_aic) #130494.2
+BIC(second_order_bic) #130056.6
+```
+Looking for prediction accuracy over interpretability. 
+
+```{r cv}
+library(caret)
+intbic <- lm(formula = bikes_in_use ~ hour + month + day_of_week + hour:month, 
+    data = bikes_in_use_by_hour)
+ctrl <- trainControl(method = "cv", number = 10)
+model_cv_bic <- train(bikes_in_use ~ hour + month + day_of_week + hour:month, data = bikes_in_use_by_hour, method = "lm", trControl = ctrl)
+
+intaic <- lm(formula = bikes_in_use ~ hour + month + day_of_week + hour:month + 
+    month:day_of_week + hour:day_of_week, data = bikes_in_use_by_hour)
+
+model_cv_aic <- train(bikes_in_use ~ hour + month + day_of_week + hour:month + 
+    month:day_of_week + hour:day_of_week, data = bikes_in_use_by_hour, method = "lm", trControl = ctrl)
+
+model_cv_aic #this performs better in cross validation
+model_cv_bic
+```
+
+```{r diagnostics}
+par(mfrow=c(2,2))
+plot(quad)
+```
+
+
+## Fitting a rf model
+```{r}
+library(randomForest)
+library(caret)
+
+# Assuming your data is in a dataframe called `bikes_in_use_by_hour`
+set.seed(123)  # Set a seed for reproducibility
+trainIndex <- createDataPartition(bikes_in_use_by_hour$bikes_in_use, p = 0.8, list = FALSE)
+trainData <- bikes_in_use_by_hour[trainIndex,]
+testData <- bikes_in_use_by_hour[-trainIndex,]
+
+rf_model <- randomForest(bikes_in_use ~ ., data = trainData)
+
+predictions <- predict(rf_model, newdata = testData)
+
+# 10-fold cross-validation
+ctrl <- trainControl(method = "cv", number = 10)
+
+rf_model_cv <- train(bikes_in_use ~ ., data = bikes_in_use_by_hour, method = "rf", trControl = ctrl)
+
+rf_model_cv
+
+varImpPlot(rf_model)
 ```
